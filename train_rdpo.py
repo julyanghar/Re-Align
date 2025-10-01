@@ -43,7 +43,6 @@ from peft import PeftModel
 from trl import DPOTrainer
 import torch.distributed as dist
 
-wandb.login(key="6472154846de7b4b9f2b26329fd0d9669e3eca27")
 local_rank = None
 
 import os
