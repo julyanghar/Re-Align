@@ -249,8 +249,8 @@ class rDPOTrainer(DPOTrainer):
 
         if self.args.use_text_similarity and text_similarity is not None:
             text_similarity = wrap_similarity(text_similarity)
-            beta_text = self.beta * (1 -torch.exp(-self.args.ls_factor_text_weight * (1 / \
-                                        text_similarity)))
+            beta_text = self.beta * (1 + self.args.ls_factor_text_weight * \
+                                     (text_similarity - 0.5))
             beta_text = beta_text.clamp(min=1e-3)
             text_loss = -torch.nn.functional.logsigmoid(beta_text * image_conditional_logits)
         else:
@@ -258,14 +258,22 @@ class rDPOTrainer(DPOTrainer):
 
         if self.args.use_img_similarity and img_similarity is not None:
             img_similarity = wrap_similarity(img_similarity)
-            beta_img = self.beta * (1 -torch.exp(-self.args.ls_factor_img_weight * (1 / \
-                                        img_similarity)))
+            beta_img = self.beta * (1 + self.args.ls_factor_img_weight * \
+                                     (img_similarity - 0.5))
             beta_img = beta_img.clamp(min=1e-3)
             img_loss = -torch.nn.functional.logsigmoid(beta_img * image_conditional_logits)
         else:
             img_loss = -torch.nn.functional.logsigmoid(self.beta * image_conditional_logits)
 
 
+        losses = text_loss + img_loss
+
+        if self.args.use_anchor:
+            anchor_logits = policy_chosen_logps - reference_chosen_logps
+            losses += (-torch.nn.functional.logsigmoid(self.beta * anchor_logits) )
+        
+        
+        
         # elif self.args.only_cal_dpo:
         #     cal_loss = F.mse_loss(chosen_rewards,
         #                           torch.tensor(1.0 / (2.0 * self.beta)).to(chosen_rewards)) + F.mse_loss(
@@ -274,38 +282,49 @@ class rDPOTrainer(DPOTrainer):
         #     losses = -torch.nn.functional.logsigmoid(self.beta * logits) \
         #     -torch.nn.functional.logsigmoid(self.beta * image_conditional_logits) \
         #     + 0.5 * cal_loss
-        # elif self.args.only_beta_dpo:
-        #     def all_gather_tensor(tensor):
-        #         if torch.distributed.is_available() and torch.distributed.is_initialized():
-        #             tensor = tensor.detach()
-        #             gathered_tensor = [torch.zeros_like(tensor) for _ in range(torch.distributed.get_world_size())]
-        #             torch.distributed.all_gather(gathered_tensor, tensor)
-        #             tensor = torch.cat(gathered_tensor, dim=0)
-        #         # else:
-        #         #     print('not distributed')
-        #         return tensor
-        #     A = all_gather_tensor(logits.detach())
-        #     mean = torch.mean(A)
-        #     std = torch.std(A)
-        #     weight_sample = torch.exp(-0.5 * ((A - mean) / (std + 1e-7)).pow(2))
-        #     sample_num = int(weight_sample.numel() * (1 - 0.2) )
-        #     sample_index = torch.multinomial(weight_sample, sample_num, replacement=False)
-        #     one_hot_like = torch.zeros_like(weight_sample)
-        #     one_hot_like[sample_index] = 1
-            
-        #     A_used = torch.mean(A[sample_index])
-        #     beta_used = self.beta * (1 + self.args.ls_factor_weight * (A_used - mean))
-        #     beta_used = beta_used.clamp(min=1e-3)
-        #     losses = -torch.nn.functional.logsigmoid(beta_used * logits) \
-        #     -torch.nn.functional.logsigmoid(beta_used * image_conditional_logits)
-        
-        
-        
-        losses = text_loss + img_loss
-        # \
-        # -torch.nn.functional.logsigmoid(self.beta * anchor_logits) 
-            
 
+        if self.args.beta_dpo:
+            def all_gather_tensor(tensor):
+                if torch.distributed.is_available() and torch.distributed.is_initialized():
+                    tensor = tensor.detach()
+                    gathered_tensor = [torch.zeros_like(tensor) for _ in range(torch.distributed.get_world_size())]
+                    torch.distributed.all_gather(gathered_tensor, tensor)
+                    tensor = torch.cat(gathered_tensor, dim=0)
+                # else:
+                #     print('not distributed')
+                return tensor
+            A = all_gather_tensor(logits.detach())
+            mean = torch.mean(A)
+            std = torch.std(A)
+            weight_sample = torch.exp(-0.5 * ((A - mean) / (std + 1e-7)).pow(2))
+            sample_num = int(weight_sample.numel() * (1 - 0.2) )
+            sample_index = torch.multinomial(weight_sample, sample_num, replacement=False)
+            one_hot_like = torch.zeros_like(weight_sample)
+            one_hot_like[sample_index] = 1
+
+            A_used = torch.mean(A[sample_index])
+            text_beta_used = self.beta * (1 + self.args.ls_factor_weight * (A_used - mean))
+            text_beta_used = text_beta_used.clamp(min=1e-3)
+
+
+
+
+            A = all_gather_tensor(image_conditional_logits.detach())
+            mean = torch.mean(A)
+            std = torch.std(A)
+            weight_sample = torch.exp(-0.5 * ((A - mean) / (std + 1e-7)).pow(2))
+            sample_num = int(weight_sample.numel() * (1 - 0.2) )
+            sample_index = torch.multinomial(weight_sample, sample_num, replacement=False)
+            one_hot_like = torch.zeros_like(weight_sample)
+            one_hot_like[sample_index] = 1
+            
+            A_used = torch.mean(A[sample_index])
+            img_beta_used = self.beta * (1 + self.args.ls_factor_weight * (A_used - mean))
+            img_beta_used = img_beta_used.clamp(min=1e-3)
+
+
+            losses = -torch.nn.functional.logsigmoid(text_beta_used * logits) \
+            -torch.nn.functional.logsigmoid(img_beta_used * image_conditional_logits)
 
         # losses -= policy_chosen_logps / 1024
         

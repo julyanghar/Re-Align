@@ -206,15 +206,23 @@ class TrainingArguments(transformers.TrainingArguments):
         default=False,
         metadata={"help": "todo"}
     )
-    
-    # only_cal_dpo: bool = field(
+    beta_dpo: bool = field(
+        default=False,
+        metadata={"help": "todo"}
+    )
+    ls_factor_weight: float = field(
+        default=0.1,
+        metadata={"help": "todo"}
+    )
+    use_anchor: bool = field(
+        default=False,
+        metadata={"help": "todo"}
+    )
+    # cal_dpo: bool = field(
     #     default=False,
     #     metadata={"help": "todo"}
     # )
-    # only_beta_dpo: bool = field(
-    #     default=False,
-    #     metadata={"help": "todo"}
-    # )
+
 
 
 
